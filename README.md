@@ -2,25 +2,25 @@
 
 ## Overview
 
-An experimental two-wheeled self-balancing robot developed using an ESP32 microcontroller, an MPU6050 inertial measurement unit (IMU), and an L298N motor driver.
+An experimental two-wheeled self-balancing robot prototype developed using an ESP32 microcontroller, an MPU6050 inertial measurement unit (IMU), and an L298N motor driver.
 
-The project focuses on hardware integration, sensor interfacing, motor control, and the development of a feedback-based balancing system.
+The project focuses on embedded systems, hardware integration, sensor interfacing, motor control, and feedback control.
+
+**Project Status: Work in Progress**
+
+The hardware prototype has been assembled and tested. An experimental PID-based balancing controller has been implemented; however, reliable autonomous balancing has not yet been achieved.
 
 ## Hardware Prototype
 
-The physical prototype was assembled using an ESP32, MPU6050 IMU, L298N motor driver, DC geared motors, and a custom-built chassis.
-
-### Robot Overview
-## Hardware Prototype
+The robot was assembled using a custom-built chassis and commercially available electronic modules.
 
 ### Front View
+
 ![Robot Front View](images/robot-front-view.jpg)
 
 ### Side View
-![Robot Side View](images/robot-side-view.jpg)
-**Project Status: Work in Progress**
 
-The hardware prototype has been assembled and tested. An initial PID-based control algorithm has been implemented, but reliable autonomous balancing has not yet been achieved.
+![Robot Side View](images/robot-side-view.jpg)
 
 ## Hardware Components
 
@@ -34,17 +34,17 @@ The hardware prototype has been assembled and tested. An initial PID-based contr
 
 ## Implemented Features
 
-- MPU6050 sensor communication via I2C
-- Gyroscope and accelerometer measurements
+- MPU6050 communication via I2C
+- Accelerometer and gyroscope data acquisition
 - Tilt angle estimation using a complementary filter
-- Bidirectional motor control using PWM
-- Experimental PID balancing controller
-- Safety cutoff for excessive tilt angles
+- Bidirectional DC motor control using PWM
+- Experimental PID-based balancing controller
+- Tilt-angle safety cutoff
 - Serial monitoring for debugging and controller tuning
 
 ## Circuit Design & PCB Layout
 
-The circuit schematic and preliminary two-layer PCB layout were designed using KiCad.
+The circuit schematic and a preliminary two-layer PCB layout were designed using KiCad.
 
 The PCB design is intended for documentation and learning purposes. It has not been manufactured or physically validated.
 
@@ -56,18 +56,22 @@ The PCB design is intended for documentation and learning purposes. It has not b
 
 ![PCB Layout](images/pcb-layout.png)
 
-
 ## Current Limitations
 
-The robot responds to changes in tilt angle but cannot yet maintain stable, sustained autonomous balance. Further improvements to the control algorithm, motor response, and mechanical design are required.
+The robot responds to changes in tilt angle but does not yet maintain stable, sustained autonomous balance.
+
+The current implementation requires further improvements in control stability, low-speed motor response, and mechanical construction.
 
 ## Future Development
 
 - Improve balancing stability and controller tuning
-- Refine motor control at low speeds
+- Refine low-speed motor control
 - Improve mechanical rigidity and component mounting
-- Investigate wheel-speed feedback for improved motion control
+- Investigate wheel-speed feedback using encoders
+- Validate and refine the PCB design
 
 ## Project Goal
+
+To develop practical skills in embedded systems, sensor fusion, feedback control, electronics integration, PCB design, and iterative prototyping.
 
 To gain practical experience in embedded systems, sensor fusion, feedback control, electronics integration, and iterative prototyping.
