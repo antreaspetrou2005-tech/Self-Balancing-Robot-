@@ -6,6 +6,18 @@ An experimental two-wheeled self-balancing robot developed using an ESP32 microc
 
 The project focuses on hardware integration, sensor interfacing, motor control, and the development of a feedback-based balancing system.
 
+## Hardware Prototype
+
+The physical prototype was assembled using an ESP32, MPU6050 IMU, L298N motor driver, DC geared motors, and a custom-built chassis.
+
+### Robot Overview
+## Hardware Prototype
+
+### Front View
+![Robot Front View](images/robot-front-view.jpg)
+
+### Side View
+![Robot Side View](images/robot-side-view.jpg)
 **Project Status: Work in Progress**
 
 The hardware prototype has been assembled and tested. An initial PID-based control algorithm has been implemented, but reliable autonomous balancing has not yet been achieved.
