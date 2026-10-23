@@ -30,6 +30,21 @@ The hardware prototype has been assembled and tested. An initial PID-based contr
 - Safety cutoff for excessive tilt angles
 - Serial monitoring for debugging and controller tuning
 
+## Circuit Design & PCB Layout
+
+The circuit schematic and preliminary two-layer PCB layout were designed using KiCad.
+
+The PCB design is intended for documentation and learning purposes. It has not been manufactured or physically validated.
+
+### Circuit Schematic
+
+![Circuit Schematic](images/circuit-schematic.png)
+
+### PCB Layout
+
+![PCB Layout](images/pcb-layout.png)
+
+
 ## Current Limitations
 
 The robot responds to changes in tilt angle but cannot yet maintain stable, sustained autonomous balance. Further improvements to the control algorithm, motor response, and mechanical design are required.
