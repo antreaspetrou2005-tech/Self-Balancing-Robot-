@@ -29,6 +29,7 @@ Initial closed-loop balancing test using an ESP32,
 MPU6050 IMU, L298N motor driver, and PID controller.
 
 **Status:** Work in Progress
+https://github.com/user-attachments/assets/e9279729-c981-4b50-a479-27e6a414e9b9
 
 
 
