@@ -22,6 +22,22 @@ The robot was assembled using a custom-built chassis and commercially available 
 
 ![Robot Side View](images/robot-side-view.jpg)
 
+
+## Prototype Demonstration
+
+Initial closed-loop balancing test using an ESP32,
+MPU6050 IMU, L298N motor driver, and PID controller.
+
+**Status:** Work in Progress
+
+
+
+
+
+
+Reliable sustained balancing has not yet been achieved.
+
+
 ## Hardware Components
 
 - ESP32 DevKit V1
