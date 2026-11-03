@@ -3,220 +3,297 @@
 #include <MPU6050_light.h>
 #include <math.h>
 
-// FINAL TEST: ESP32 + MPU6050 + L298N + TT motors
-// Same pinout and PID gains as v1.9.
-
-#define ENA 23
-#define IN1 26
-#define IN2 25
-#define ENB 32
-#define IN3 33
-#define IN4 14
+// ======================================
+// 1. MPU6050 & HARDWARE FILTER
+// ======================================
 
 MPU6050 mpu(Wire);
+const uint8_t MPU_ADDR = 0x68;
 
-float Kp = 12.0f;
-float Ki = 100.0f;
-float Kd = 0.20f;
-const float TARGET_ANGLE = -1.7f;
 
-const float ANGLE_DEADBAND = 0.20f;
-const float MAX_ANGLE = 30.0f;
-const float FILTER_TAU = 0.10f;
-const unsigned long LOOP_US = 10000;
-const int MOTOR_DIRECTION = 1;
+const float GYRO_SIGN = 1.0f;
 
-// Motor behavior: starting requires more PWM than keeping a motor moving.
-// Both wheels receive the same PWM because there are no encoders.
-const int START_PWM = 85;
-const int RUN_PWM = 72;
-const int MAX_PWM = 255;
-const float START_COMMAND = 1.5f;
-const float STOP_COMMAND = 0.5f;
-const float FULL_PWM_COMMAND = 150.0f;
-const int PWM_SLEW_PER_LOOP = 20;  // maximum increase/decrease each 10 ms
+// ======================================
+// 2. L298N PINS & MOTOR CONFIGURATION
+// ======================================
 
-float angle = 0.0f;
-float gyroRate = 0.0f;
+const int ENA = 23;
+const int IN1 = 26;
+const int IN2 = 25;
+
+const int ENB = 32;
+const int IN3 = 33;
+const int IN4 = 14;
+
+
+const int MIN_PWM = 80;
+
+
+const bool ENABLE_MOTORS = true  ;
+
+// ======================================
+// 3. CONTROL LOOP (200 Hz)
+// ======================================
+
+const uint32_t interval = 5000; // 5000 us = 5 ms (200 Hz)
+
+uint32_t previousTime = 0;
+uint32_t previousPrintTime = 0;
+
+// ======================================
+// 4. COMPLEMENTARY FILTER
+// ======================================
+
+// Σταθερά χρόνου φίλτρου (με dt = 0.005s δίνει alpha ≈ 0.99)
+float tau = 0.5f;
+
+float previousAngle = 0.0f;
+float filteredAngle = 0.0f;
+
+// ======================================
+// 5. PID PARAMETERS
+// ======================================
+
+float Kp = 22.0f;
+float Ki = 5.0f;
+float Kd = 0.6f;
+
+float setpoint = 0.0f;
 float integral = 0.0f;
-float filteredGyroRate = 0.0f;
-unsigned long lastLoop = 0;
-unsigned long lastPrint = 0;
-bool safetyStopped = false;
 
-bool motorsActive = false;
-int appliedPwm = 0;
-int appliedDirection = 0;
+// Όριο γωνίας πτώσης (σε μοίρες) για αυτόματη διακοπή των μοτέρ
+const float FALL_ANGLE_LIMIT = 40.0f;
+
+// ======================================
+// 6. MOTOR FUNCTIONS
+// ======================================
 
 void stopMotors() {
-  ledcWrite(ENA, 0);
-  ledcWrite(ENB, 0);
-  digitalWrite(IN1, LOW);
-  digitalWrite(IN2, LOW);
-  digitalWrite(IN3, LOW);
-  digitalWrite(IN4, LOW);
-  motorsActive = false;
-  appliedPwm = 0;
-  appliedDirection = 0;
-}
+    analogWrite(ENA, 0);
+    analogWrite(ENB, 0);
 
-void setDirection(int direction) {
-  if (direction > 0) {
-    digitalWrite(IN1, HIGH);
-    digitalWrite(IN2, LOW);
-    digitalWrite(IN3, HIGH);
-    digitalWrite(IN4, LOW);
-  } else {
     digitalWrite(IN1, LOW);
-    digitalWrite(IN2, HIGH);
+    digitalWrite(IN2, LOW);
     digitalWrite(IN3, LOW);
-    digitalWrite(IN4, HIGH);
-  }
+    digitalWrite(IN4, LOW);
 }
 
-void driveMotors(float command) {
-  float magnitude = fabsf(command);
-  int direction = (command >= 0.0f ? 1 : -1) * MOTOR_DIRECTION;
-
-  if (!motorsActive) {
-    if (magnitude < START_COMMAND) {
-      stopMotors();
-      return;
+void setMotors(float output) {
+    // Αν η εντολή είναι σχεδόν μηδενική, σβήνουμε τα μοτέρ
+    if (fabsf(output) < 0.5f) {
+        stopMotors();
+        return;
     }
-    motorsActive = true;
-    appliedPwm = 0;
-    appliedDirection = direction;
-    setDirection(direction);
-  } else {
-    if (magnitude < STOP_COMMAND) {
-      stopMotors();
-      return;
-    }
-    if (direction != appliedDirection) {
-      // Direction changes should never happen while applying PWM.
-      ledcWrite(ENA, 0);
-      ledcWrite(ENB, 0);
-      appliedPwm = 0;
-      appliedDirection = direction;
-      setDirection(direction);
-    }
-  }
 
-  int basePwm = (appliedPwm == 0) ? START_PWM : RUN_PWM;
-  int requestedPwm = basePwm + (int)((MAX_PWM - basePwm) *
-                              constrain(magnitude, 0.0f, FULL_PWM_COMMAND) /
-                              FULL_PWM_COMMAND);
-  requestedPwm = constrain(requestedPwm, START_PWM, MAX_PWM);
+    output = constrain(output, -255.0f, 255.0f);
+    float absOut = fabsf(output);
 
-  // Limit changes near upright, but allow immediate full power during a fall.
-  if (magnitude < 60.0f && appliedPwm > 0) {
-    requestedPwm = constrain(requestedPwm,
-                             max(0, appliedPwm - PWM_SLEW_PER_LOOP),
-                             min(MAX_PWM, appliedPwm + PWM_SLEW_PER_LOOP));
-  }
-  appliedPwm = requestedPwm;
-  ledcWrite(ENA, appliedPwm);
-  ledcWrite(ENB, appliedPwm);
+    // Χαρτογράφηση του εύρους (0..255) στο ενεργό εύρος των μοτέρ (MIN_PWM..255)
+    int pwm = (int)roundf(MIN_PWM + (absOut / 255.0f) * (255.0f - MIN_PWM));
+    pwm = constrain(pwm, 0, 255);
+
+    if (output > 0.0f) {
+        digitalWrite(IN1, HIGH);
+        digitalWrite(IN2, LOW);
+
+        digitalWrite(IN3, HIGH);
+        digitalWrite(IN4, LOW);
+    } else {
+        digitalWrite(IN1, LOW);
+        digitalWrite(IN2, HIGH);
+
+        digitalWrite(IN3, LOW);
+        digitalWrite(IN4, HIGH);
+    }
+
+    analogWrite(ENA, pwm);
+    analogWrite(ENB, pwm);
 }
 
-float getAccelAngle() {
-  return atan2f(-mpu.getAccX(), -mpu.getAccZ()) * 180.0f / PI;
-}
+// ======================================
+// 7. SETUP
+// ======================================
 
 void setup() {
-  Serial.begin(115200);
-  pinMode(IN1, OUTPUT);
-  pinMode(IN2, OUTPUT);
-  pinMode(IN3, OUTPUT);
-  pinMode(IN4, OUTPUT);
-  ledcAttach(ENA, 1000, 8);
-  ledcAttach(ENB, 1000, 8);
-  stopMotors();
+    Serial.begin(115200);
 
-  Wire.begin(21, 22);
-  Wire.setClock(400000);
-  Serial.println("Starting MPU6050...");
-  byte status = mpu.begin();
-  if (status != 0) {
-    Serial.println("MPU6050 ERROR");
-    while (true) { stopMotors(); delay(100); }
-  }
+    // Motor pins
+    pinMode(ENA, OUTPUT);
+    pinMode(IN1, OUTPUT);
+    pinMode(IN2, OUTPUT);
 
-  Serial.println("Keep robot UPRIGHT and STILL");
-  delay(1500);
-  mpu.calcOffsets(true, false);
-  mpu.update();
-  angle = getAccelAngle();
-  integral = 0.0f;
-  filteredGyroRate = -mpu.getGyroY();
-  lastLoop = micros();
-  Serial.println("READY - FINAL TEST");
+    pinMode(ENB, OUTPUT);
+    pinMode(IN3, OUTPUT);
+    pinMode(IN4, OUTPUT);
+
+    // PWM configuration (ESP32 Arduino Core 3.x)
+    analogWriteResolution(ENA, 8);
+    analogWriteResolution(ENB, 8);
+
+    analogWriteFrequency(ENA, 1000);
+    analogWriteFrequency(ENB, 1000);
+
+    stopMotors();
+
+    // Start I2C στα 400 kHz (Fast Mode) για γρήγορη ανάγνωση
+    Wire.begin(21, 22);
+    Wire.setClock(400000);
+
+    delay(300);
+
+    byte status = mpu.begin(0, 0);
+
+    if (status != 0) {
+        Serial.println("MPU initialization failed");
+        while (true) {
+            stopMotors();
+            delay(1000);
+        }
+    }
+
+    
+    Wire.beginTransmission(MPU_ADDR);
+    Wire.write(0x1A); 
+    Wire.write(0x04); 
+    Wire.endTransmission(true);
+
+    // Calibrate gyro offsets
+    Serial.println("Keep the robot stationary!");
+    mpu.calcOffsets(true, false);
+    Serial.println("Gyro calibration complete");
+
+    Serial.print("Gyro Y bias: ");
+    Serial.println(mpu.getGyroYoffset(), 4);
+
+    // Initial MPU measurements
+    mpu.update();
+
+    float ax = mpu.getAccX();
+    float az = mpu.getAccZ();
+
+    float ACCangleDeg = atan2(ax, -az) * 180.0f / PI;
+
+    previousAngle = ACCangleDeg;
+    filteredAngle = ACCangleDeg;
+
+    previousTime = micros();
+    previousPrintTime = millis();
+
+    Serial.println("System ready!");
 }
 
+// ======================================
+// 8. MAIN CONTROL LOOP
+// ======================================
+
 void loop() {
-  unsigned long now = micros();
-  if ((unsigned long)(now - lastLoop) < LOOP_US) return;
-  float dt = (now - lastLoop) / 1000000.0f;
-  lastLoop = now;
-  mpu.update();
-  if (dt <= 0.0f || dt > 0.1f) {
-    stopMotors();
-    integral = 0.0f;
-    return;
-  }
+    uint32_t currentTime = micros();
+    uint32_t elapsed = currentTime - previousTime;
 
-  float accelAngle = getAccelAngle();
-  gyroRate = -mpu.getGyroY();
-  float alpha = FILTER_TAU / (FILTER_TAU + dt);
-  float predictedAngle = angle + gyroRate * dt;
-  float difference = accelAngle - predictedAngle;
-  if (fabsf(difference) < 8.0f) {
-    angle = alpha * predictedAngle + (1.0f - alpha) * accelAngle;
-  } else {
-    angle = predictedAngle;
-  }
-
-  if (fabsf(angle) > MAX_ANGLE) {
-    safetyStopped = true;
-    stopMotors();
-    integral = 0.0f;
-  }
-  if (safetyStopped) {
-    if (fabsf(angle) < 5.0f && fabsf(gyroRate) < 15.0f) {
-      safetyStopped = false;
-      integral = 0.0f;
-    } else {
-      stopMotors();
-      return;
+    if (elapsed < interval) {
+        return;
     }
-  }
 
-  float error = angle - TARGET_ANGLE;
-  if (fabsf(error) < ANGLE_DEADBAND) error = 0.0f;
+    float dt = elapsed / 1000000.0f;
+    previousTime = currentTime;
 
-  if (fabsf(error) < 3.0f) {
+    // Large delay protection: reset timing/filter state
+    if (dt > 1.0f) {
+        stopMotors();
+        integral = 0.0f;
+
+        mpu.update();
+
+        float ax = mpu.getAccX();
+        float az = mpu.getAccZ();
+
+        filteredAngle = atan2(ax, -az) * 180.0f / PI;
+        previousAngle = filteredAngle;
+        previousTime = micros();
+
+        return;
+    }
+
+    // -----------------------------------
+    // STEP 1: READ MPU6050
+    // -----------------------------------
+
+    mpu.update();
+
+    float ax = mpu.getAccX();
+    float az = mpu.getAccZ();
+
+    // Εφαρμογή του GYRO_SIGN ώστε η φορά του γυροσκοπίου να συμφωνεί με το atan2
+    float gyroRateCorrected = GYRO_SIGN * mpu.getGyroY();
+
+    // -----------------------------------
+    // STEP 2: ACCELEROMETER ANGLE
+    // -----------------------------------
+
+    float ACCangleDeg = atan2(ax, -az) * 180.0f / PI;
+
+    // -----------------------------------
+    // STEP 3: GYROSCOPE ANGLE
+    // -----------------------------------
+
+    float GYROangle = previousAngle + gyroRateCorrected * dt;
+
+    // -----------------------------------
+    // STEP 4: COMPLEMENTARY FILTER
+    // -----------------------------------
+
+    float alpha = tau / (tau + dt);
+
+    filteredAngle = alpha * GYROangle + (1.0f - alpha) * ACCangleDeg;
+    previousAngle = filteredAngle;
+
+    // -----------------------------------
+    // STEP 5: PID
+    // -----------------------------------
+
+    float error = setpoint - filteredAngle;
+
     integral += error * dt;
-    if (fabsf(error) < 0.5f) integral *= expf(-dt / 1.0f);
-  } else {
-    integral = 0.0f;
-  }
-  integral = constrain(integral, -0.20f, 0.20f);
+    integral = constrain(integral, -50.0f, 50.0f);
 
-  // D filtering: keep it gentle and consistent with the previous stable setup.
-  float dAlpha = dt / (0.02f + dt);
-  filteredGyroRate += dAlpha * (gyroRate - filteredGyroRate);
+    float P = Kp * error;
+    float I = Ki * integral;
+    float D = -Kd * gyroRateCorrected;
 
-  float control = Kp * error + Ki * integral + Kd * filteredGyroRate;
-  control = constrain(control, -255.0f, 255.0f);
-  driveMotors(control);
+    float output = P + I + D;
 
-  if (millis() - lastPrint >= 200) {
-    lastPrint = millis();
-    Serial.print("ANGLE: "); Serial.print(angle, 2);
-    Serial.print(" | GYRO: "); Serial.print(gyroRate, 2);
-    Serial.print(" | Error: "); Serial.print(error, 2);
-    Serial.print(" | Integral: "); Serial.print(integral, 2);
-    Serial.print(" | CONTROL: "); Serial.print(control, 1);
-    Serial.print(" | PWM: "); Serial.println(appliedPwm);
-  }
+    // -----------------------------------
+    // STEP 6: OUTPUT LIMIT & FALL CUTOFF
+    // -----------------------------------
+
+    output = constrain(output, -255.0f, 255.0f);
+
+    // Αν το ρομπότ γείρει πάνω από τις 40 μοίρες (έπεσε) ή αν τα μοτέρ είναι 
+    // απενεργοποιημένα μέσω του ENABLE_MOTORS, σβήνουμε τα μοτέρ και μηδενίζουμε το I.
+    if (!ENABLE_MOTORS || fabsf(filteredAngle) > FALL_ANGLE_LIMIT) {
+        stopMotors();
+        integral = 0.0f;
+    } else {
+        setMotors(output);
+    }
+
+    // -----------------------------------
+    // STEP 7: SERIAL MONITOR
+    // -----------------------------------
+
+    if (millis() - previousPrintTime >= 100) {
+        previousPrintTime = millis();
+
+        Serial.print("Acc Angle: ");
+        Serial.print(ACCangleDeg, 2);
+
+        Serial.print(" | Filtered Angle: ");
+        Serial.print(filteredAngle, 2);
+
+        Serial.print(" | GyroY: ");
+        Serial.print(gyroRateCorrected, 2);
+
+        Serial.print(" | PID Out: ");
+        Serial.println(output, 2);
+    }
 }
