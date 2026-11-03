@@ -16,11 +16,11 @@ The robot was assembled using a custom-built chassis and commercially available 
 
 ### Front View
 
-![Robot Front View](images/robot-front-view.jpg)
+<img src="images/robot-front-view.jpg" width="350">
 
 ### Side View
 
-![Robot Side View](images/robot-side-view.jpg)
+<img src="images/robot-side-view.jpg" width="300">
 
 
 ## Prototype Demonstration
